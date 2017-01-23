@@ -1,0 +1,2 @@
+bindkey msgbox DOWN PAGE_NEXT
+bindkey msgbox UP PAGE_PREV
