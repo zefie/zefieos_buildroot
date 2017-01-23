@@ -16,14 +16,16 @@ for l in $(cat "${BRDIR}/z_customfiles/config.txt"); do
 done;
 
 ## FOR TESTING IN QEMU ##
-rm -rf "${OUTDIR}/lib/modules/4.4.0-59-generic"
+rm -rf "${OUTDIR}/lib/modules/*"
 
-mkdir -p "${OUTDIR}/lib/modules/4.4.0-59-generic/kernel/fs/fat"
-cp -v "/lib/modules/4.4.0-59-generic/kernel/fs/fat/msdos.ko" "${OUTDIR}/lib/modules/4.4.0-59-generic/kernel/fs/fat/msdos.ko"
-mkdir -p "${OUTDIR}/lib/modules/4.4.0-59-generic/kernel/fs/nls"
-cp -v "/lib/modules/4.4.0-59-generic/kernel/fs/nls/nls_iso8859-1.ko" "${OUTDIR}/lib/modules/4.4.0-59-generic/kernel/fs/nls/nls_iso8859-1.ko"
+KERND="$(uname -r)"
 
-cp -v "/lib/modules/4.4.0-59-generic/modules.dep" "${OUTDIR}/lib/modules/4.4.0-59-generic/modules.dep"
+mkdir -p "${OUTDIR}/lib/modules/${KERND}/kernel/fs/fat"
+cp -v "/lib/modules/${KERND}/kernel/fs/fat/msdos.ko" "${OUTDIR}/lib/modules/${KERND}/kernel/fs/fat/msdos.ko"
+mkdir -p "${OUTDIR}/lib/modules/${KERND}/kernel/fs/nls"
+cp -v "/lib/modules/${KERND}/kernel/fs/nls/nls_iso8859-1.ko" "${OUTDIR}/lib/modules/${KERND}/kernel/fs/nls/nls_iso8859-1.ko"
+
+cp -v "/lib/modules/${KERND}/modules.dep" "${OUTDIR}/lib/modules/${KERND}/modules.dep"
 
 
 exit 0;
