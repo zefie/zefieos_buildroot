@@ -80,8 +80,8 @@ if [ "${BR2_TARGET_ROOTFS_CPIO}" == "y" ]; then
 	exit 0;
 else
 	# This script requires cpio support enabled.
-	# If it isn't there is point in including this script to run
-	# So tell the user and fail
+	# If it isn't, there is no point in including this script to run
+	# So tell the user, then fail
 	echo "*** BR2_TARGET_ROOTFS_CPIO not enabled in build config! Enable it or remove this script from post build."
 	exit 1;
 fi

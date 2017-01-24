@@ -1,0 +1,284 @@
+#!/bin/bash
+
+progress_dialog() {
+	echo "${3}" | dialog --keep-window --backtitle "${1}" --gauge "${2}" 10 "${DIAGWIDTH}" 0
+}
+
+select_image_folder() {
+	unset DIAGOPTS_BROWSE;
+
+	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}"
+	for f in $(ls -1 "${IMGROOTDIR}/"); do
+		if [ -d "${IMGROOTDIR}/${f}" ] && [ -f "${IMGROOTDIR}/${f}/restore.txt" ]; then
+			if [ -f "${IMGROOTDIR}/${f}/info.txt" ]; then
+				DIAGOPTS_BROWSE+=("${f}" "$(cat "${IMGROOTDIR}/${f}/info.txt")");
+			else
+				DIAGOPTS_BROWSE+=("${f}" "No Description");
+			fi
+		fi
+	done;
+	if [ -z "${DIAGOPTS_BROWSE}" ]; then
+		dialog --backtitle "Zefie's Ares8 eMMC Recovery System" --msgbox "No backup folders available\n\nPlease see README.txt" 10 45
+	else
+		DIAGTITLE="Select Backup Image"
+		DIAGMENU="Please select the image you wish to restore"
+		exec 3>&1
+		RESULT=$(dialog --nocancel --backtitle "${DIAGTITLE}" --menu "${DIAGMENU}" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" "${DIAGOPTS_BROWSE[@]}" 2>&1 1>&3)
+		exec 3>&-;
+		IMGNAME="${RESULT}"
+		IMGDIR="${IMGROOTDIR}/${IMGNAME}/images"
+		SGDPART="${IMGROOTDIR}/${IMGNAME}/table/sgdisk.bin"
+		TXTPART="${IMGROOTDIR}/${IMGNAME}/restore.txt"
+	fi
+	umount_dev "${USBDEV}${SPL}${USBPART}"
+}
+
+browse_devices() {
+	unset DIAGOPTS_BROWSE;
+
+	for f in $(find /dev | /usr/bin/grep -Eo '\/dev\/[shm][dm][a-z](blk[0-9])?(?!0-9)*' | sort -u); do
+		if [ -b "${f}" ]; then
+			DIAGOPTS_BROWSE+=("${f}" "${f}");
+		fi
+	done;
+	if [ "${1}" == "usb" ]; then
+		DIAGTITLE="Select USB Root Device"
+		DIAGMENU="Please select the root device of your USB"
+	fi
+	if [ "${1}" == "dest" ]; then
+		DIAGTITLE="Select Destination Root Device"
+		DIAGMENU="Please select the root device of your destination drive"
+	fi
+	exec 3>&1
+	RESULT=$(dialog --nocancel --backtitle "${DIAGTITLE}" --menu "${DIAGMENU}" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" "${DIAGOPTS_BROWSE[@]}" 2>&1 1>&3)
+	exec 3>&-;
+	if [ "${1}" == "usb" ]; then
+		set_usb_dev "${RESULT}"
+	fi
+	if [ "${1}" == "dest" ]; then
+		set_dest_dev "${RESULT}"
+	fi
+	if [ -b "$DESTDEV" ] && [ -b "$USBDEV" ] && [ "$NODEVS" == "1" ]; then
+		NODEVS=0;
+	fi
+}
+
+confirm_menu() {
+	dialog --defaultno --backtitle "Confirm Data Destruction" \
+		--yesno "The action you have selected will cause permanent data loss.\n\nAre you sure you wish to continue?" 10 50
+	CODE=$?
+	if [ "$CODE" == "0" ]; then
+		VERIFYYES=1;
+	else
+		VERIFYYES=0;
+	fi
+}
+
+log_copy() {
+	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}" "rw"
+	rm -f /usb/zefie.log
+	cp "${LOGFILE}" /usb/zefie.log
+	if [ -f "/usb/zefie.log" ]; then
+		USBSUCCESS=1
+	fi
+	umount_dev "${USBDEV}${SPL}${USBPART}"
+	if [ "$USBSUCCESS" == "1" ]; then
+		dialog --backtitle "Zefie's Ares8 eMMC Recovery System" --msgbox "Log files copied to USB" 5 30
+	else
+		dialog --backtitle "Zefie's Ares8 eMMC Recovery System" --msgbox "There was an error copying the log files to USB" 5 50
+	fi
+}
+
+start_menu() {
+	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}" 2>>${LOGFILE} 1>>${LOGFILE}
+	if [ "$NODEVS" == "1" ]; then
+		DIAGOPTS=("View Log" "View the log from the restore process"
+			  "Copy Log to USB" "Copies the log files to the root of the USB"
+			  "" ""
+			  "Define USB Dev" "Requires keyboard. Current value: ${USBDEV}"
+			  "Define Destination Dev" "Requires keyboard. Current value: ${DESTDEV}"
+			  "Enter Shell" "Keyboard required."
+			  "" ""
+			  "Reboot" "Cancel and do not touch eMMC"
+			  "Shutdown" "Cancel and do not touch eMMC")
+		DIAGTITLE="Zefie's Ares8 eMMC Recovery System - No Devices Configured"
+	elif [ ! -d "${IMGDIR}" ] || [ ! -f "${TXTPART}" ]; then
+		DIAGOPTS=("Change Backup" "Select backup folder. Current: none"
+			  "Wipe Only" "Wipe, but do not restore data"
+			  "" ""
+			  "View Log" "View the log from the restore process"
+			  "Copy Log to USB" "Copies the log files to the root of the USB"
+			  "" ""
+			  "Define USB Dev" "USB Source Device. Current value: ${USBDEV}"
+			  "Define Dest Dev" "Restore Target. Current value: ${DESTDEV}"
+			  "Enter Shell" "Keyboard required."
+			  "" ""
+			  "Reboot" "Cancel and do not touch eMMC"
+			  "Shutdown" "Cancel and do not touch eMMC")
+		DIAGTITLE="Zefie's Ares8 eMMC Recovery System"
+
+	else
+		DIAGOPTS=("Change Backup" "Select backup folder. Current: ${IMGNAME}"
+		          "" ""
+			  "Full Restore" "Completely erase target and restore partitions"
+			  "Data Restore" "Restore partitions, but do not reparititon"
+			  "Custom Restore" "Select what to restore"
+			  "Wipe Only" "Wipe, but do not restore data"
+			  "Partition Only" "Wipe and partition, but do not restore data"
+			  "" ""
+			  "View Log" "View the log from the restore process"
+			  "Copy Log to USB" "Copies the log files to the root of the USB"
+			  "" ""
+			  "Define USB Dev" "USB Source Device. Current value: ${USBDEV}"
+			  "Define Dest Dev" "Restore Target. Current value: ${DESTDEV}"
+			  "Enter Shell" "Keyboard required."
+			  "" ""
+			  "Reboot" "Cancel and do not touch eMMC"
+			  "Shutdown" "Cancel and do not touch eMMC")
+		DIAGTITLE="Zefie's Ares8 eMMC Recovery System"
+	fi
+	umount_dev "${USBDEV}${SPL}${USBPART}"
+	exec 3>&1
+	RESULT=$(dialog --nocancel --backtitle "${DIAGTITLE}" --menu "Please select an action" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" "${DIAGOPTS[@]}" 2>&1 1>&3)
+	exec 3>&-;
+
+	case "$RESULT" in
+		"")
+			start_menu
+			;;
+		"Define USB Dev")
+			browse_devices usb
+			start_menu
+			;;
+		"Change Backup")
+			select_image_folder
+			start_menu
+			;;
+		"Custom Restore")
+			# DOSHIT
+			;;
+		"Define Dest Dev")
+			browse_devices dest
+			start_menu
+			;;
+		"Full Restore")
+			confirm_menu
+			if [ "${VERIFYYES}" != "1" ]; then
+				start_menu;
+			fi
+			DORESTORE=1
+			DOWIPE=1
+			DOPARTITION=1
+			;;
+		"Data Restore")
+			confirm_menu
+			if [ "${VERIFYYES}" != "1" ]; then
+				start_menu;
+			fi
+			DORESTORE=1
+			DOWIPE=0
+			DOPARTITION=0
+			;;
+		"Reboot")
+			exit 70;
+			;;
+		"Shutdown")
+			exit 71;
+			;;
+		"View Log")
+			dialog --exit-label "Back" --backtitle "Zefie's Ares8 eMMC Recovery System" --textbox "${LOGFILE}" "${DIAGHEIGHT}" "${DIAGWIDTH}"
+			start_menu
+			;;
+		"Copy Log to USB")
+			log_copy
+			start_menu
+			;;
+		"Enter Shell")
+			umount_dev "${USBDEV}${SPL}${USBPART}"
+			/bin/bash
+			exit 69;
+			;;
+		"Wipe Only")
+			confirm_menu
+			if [ "${VERIFYYES}" != "1" ]; then
+				start_menu;
+			fi
+			DORESTORE=0
+			DOWIPE=1
+			DOPARTITION=0
+			;;
+		"Partition Only")
+			confirm_menu
+			if [ "${VERIFYYES}" != "1" ]; then
+				start_menu;
+			fi
+			DORESTORE=0
+			DOWIPE=1
+			DOPARTITION=1
+			;;
+	esac
+}
+
+end_menu() {
+	unset STRTITLE
+	unset DIAGOPTS
+	DIAGOPTS=("View Log" "View the log from the restore process" \
+        "Copy Log to USB" "Copies the log files to the root of the USB"
+	"" "");
+	case "${1}" in
+		"0")
+			STRTITLE="Successfully completed - What would you like to do?"
+			DIAGOPTS+=("Restart Restore" "Relaunch this script");
+			;;
+		"1")
+			STRTITLE="There was an error during the restore process"
+			DIAGOPTS+=("Retry Restore" "Relaunch this script and try again");
+			;;
+	esac
+
+	DIAGOPTS+=("Reboot System" "Boot into your restored system")
+	if [ "${KERNEL_SUPPORT_REBOOT_TARGET}" == "1" ]; then
+		DIAGOPTS+=("Reboot Recovery" "Boot into recovery" \
+			   "Reboot Bootloader" "Boot into Fastboot");
+	fi
+
+	DIAGOPTS+=("" "" \
+		   "Enter Shell" "Keyboard required");
+	exec 3>&1
+	RESULT=$(dialog --no-cancel --backtitle "Zefie's Ares8 eMMC Recovery System" \
+		--menu "${STRTITLE}" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" \
+		"${DIAGOPTS[@]}" 2>&1 1>&3)
+	exec 3>&-;
+
+
+	case "$RESULT" in
+		"")
+			end_menu "${1}"
+			;;
+		"View Log")
+			dialog --exit-label "Back" --backtitle "Zefie's Ares8 eMMC Recovery System" --textbox "${LOGFILE}" "${DIAGHEIGHT}" "${DIAGWIDTH}"
+			end_menu "${1}"
+			;;
+		"Copy Log to USB")
+			log_copy
+			end_menu "${1}"
+			;;
+		"Retry Restore" | "Restart Restore")
+			exit 69;
+			;;
+		"Reboot System")
+			exit 0;
+			;;
+		"Reboot Recovery")
+			exit 71;
+			;;
+		"Reboot Bootloader")
+			exit 72;
+			;;
+		"Enter Shell")
+			umount_dev "${USBDEV}${SPL}${USBPART}"
+			/bin/bash
+			end_menu "${1}"
+			;;
+	esac
+}

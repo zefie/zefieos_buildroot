@@ -1,5 +1,7 @@
-zefie.sh:/sbin/zefie:0755
-zefie_boot.sh:/sbin/zefie_boot:0755
+core/zefie:/sbin/zefie:0755
+core/bootstrap:/sbin/zefie_bootstrap:0755
+core/functions:/etc/zefie/core/functions:0644
+core/dialogs:/etc/zefie/core/dialogs:0644
 inittab:/etc/inittab:0644
 ext2simg:/usr/bin/ext2simg:0755
 img2simg:/usr/bin/img2simg:0755

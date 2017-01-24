@@ -24,7 +24,7 @@
 ::sysinit:/etc/init.d/rcS
 
 # Put a getty on the serial port
-console::respawn:-/bin/bash /sbin/zefie_boot
+console::respawn:-/bin/bash /sbin/zefie_bootstrap
 
 # Stuff to do for the 3-finger salute
 #::ctrlaltdel:/sbin/reboot

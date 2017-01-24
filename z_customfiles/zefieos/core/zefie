@@ -1,0 +1,155 @@
+#!/bin/bash
+USBMNT="/usb"
+USBPART=1
+DESTMNT="/dest"
+IMGROOTDIR="${USBMNT}/data"
+BLOCKSIZE=4096
+TWRP_TAR_FLAGS="--strip-components=1 -xp"
+DIAGHEIGHT=24
+DIAGWIDTH=80
+
+LOGFILE="/zefie.log"
+
+KERNEL_SUPPORT_REBOOT_TARGET=0
+DORESTORE=0
+DOPARTITION=0
+DOWIPE=0
+ISERROR=0
+ISEMMC=0
+VERIFYYES=0
+NODEVS=0
+
+set IMGDIR
+set TXTPART
+set SGDPART
+set IMGNAME
+
+source /etc/zefie/core/functions
+
+logd "Process started at $(date)"
+
+for f in $(cat /proc/cmdline); do
+	if [ ! -z "$(echo "${f}" | /usr/bin/grep zefie)" ]; then
+		ZTY=$(echo "${f}" | cut -d'.' -f2 | cut -d'=' -f1)
+		ZPM=$(echo "${f}" | cut -d'.' -f2 | cut -d'=' -f2)
+		if [ "$ZTY" == "usb" ]; then
+			set_usb_dev "$ZPM"
+		fi
+		if [ "$ZTY" == "dest" ]; then
+			set_dest_dev "$ZPM"
+		fi
+	fi
+done;
+
+if [ ! -b "$DESTDEV" ] || [ ! -b "$USBDEV" ]; then
+	log "Could not read device data from kernel command line"
+	NODEVS=1
+fi
+
+if [ -b "${USBDEV}" ]; then
+	initial_scan_image_folder
+fi
+
+start_menu
+
+
+logd "Searching for eMMC device at ${DESTDEV}..."
+progress_dialog "Preparing devices" "Searching for eMMC device at ${DESTDEV}" 0
+if [ ! -b "${DESTDEV}" ]; then
+	log " Failed."
+	exit 1;
+fi
+
+logd "Found eMMC device"
+
+if [ "${DORESTORE}" == "1" ] || [ "${DOPARTITION}" == "1" ]; then
+	progress_dialog "Preparing devices" "Mounting USB device ${USBDEV}${SPL}${USBPART}..." 25
+	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}"
+fi
+
+if [ "${DOPARTITION}" == "1" ] || [ "${DOWIPE}" == "1" ] ; then
+	if [ "$ISEMMC" == "1" ]; then
+		logd "Securely erasing all data on eMMC..."
+		progress_dialog "Preparing devices" "Secure erasing eMMC..." 50
+		DISKSIZE=$(fdisk --bytes -l "${DESTDEV}" | /usr/bin/grep Disk | /usr/bin/grep bytes | cut -d' ' -f5)
+		re='^[0-9]+$'
+		if ! [[ $DISKSIZE =~ $re ]] ; then
+			ISERROR=1
+			logd "Error getting size of ${DESTDEV} (got ${DISKSIZE}), expected size in bytes"
+		else
+			secure_erase_dev "${DESTDEV}" 0 "${DISKSIZE}"
+			check_result $?
+		fi
+	else
+		logd "Clearing partition table on disk..."
+		progress_dialog "Preparing devices" "Clearing partition table on disk..." 50
+		sgdisk --zap-all "${DESTDEV}" 2>>${LOGFILE} 1>>${LOGFILE}
+		check_result $?
+	fi
+	logd "Refreshing partitions..."
+	progress_dialog "Preparing devices" "Refreshing partititon table..." 75
+	blockdev --flushbufs --rereadpt "${DESTDEV}" 2>>${LOGFILE} 1>>${LOGFILE}
+fi
+
+if [ "${DOPARTITION}" == "1" ]; then
+	logd "Restoring partition table from ${SGDPART}"
+	progress_dialog "Preparing devices" "Restoring partititon table with sgdisk binary table..." 85
+	sgdisk -l "${SGDPART}" "${DESTDEV}" 2>>${LOGFILE} 1>>${LOGFILE}
+
+	logd "Refreshing partitions..."
+	progress_dialog "Preparing devices" "Refreshing partititon table..." 100
+	partprobe "${DESTDEV}" 2>>${LOGFILE} 1>>${LOGFILE}
+fi
+
+if [ "${DORESTORE}" == "1" ]; then
+	logd "Begin restore routine"
+	NUMPARTS=$(wc -l < "${TXTPART}")
+	CURPART=0
+	progress_dialog "Restoring data" "Processing restore configuration ($TXTPART)..." 0
+	for l in $(cat $TXTPART); do
+		CURPART=$((CURPART + 1))
+		PERCENT=$(($(awk "BEGIN { pc=100*${CURPART}/${NUMPARTS}; i=int(pc); print (pc-i<0.5)?i:i+1 }") - 1))
+		PARTNUM=$(echo "${l}" | cut -d':' -f1 2>>${LOGFILE})
+		PARTNAM=$(echo "${l}" | cut -d':' -f2 2>>${LOGFILE})
+		PARTCMD=$(echo "${l}" | cut -d':' -f3 2>>${LOGFILE})
+		PARTARG=$(echo "${l}" | cut -d':' -f4 2>>${LOGFILE})
+
+		unset MD5RES;
+		unset SKIPPART;
+		unset WINFILESM;
+		unset WINFILESU;
+		unset WINFILES;
+		unset RESTYPE;
+
+		## Workaround for issue with partitions not appearing...
+		if [ ! -b "${DESTDEV}${PL}${PARTNUM}" ]; then
+			while [ ! -b "${DESTDEV}${PL}${PARTNUM}" ]; do
+				blockdev --flushbufs --rereadpt "${DESTDEV}"
+				sleep 1
+			done;
+		fi
+		## End workaround
+
+		if [ ! -z "${PARTCMD}" ]; then
+			if [ "${PARTCMD}" == "format" ]; then
+				if [ "${PARTARG}" == "ext2" ] || [ "${PARTARG}" == "ext3" ] || [ "${PARTARG}" == "ext4" ]; then
+					logd "Formatting ${PARTNAM} as ${PARTARG}..."
+					progress_dialog "Restoring data" "Formatting ${PARTNAM} as ${PARTARG}..." "${PERCENT}"
+					format_disk "${PARTARG}" "${PARTNAM}" "${DESTDEV}${PL}${PARTNUM}"
+					check_result $?
+				fi
+			fi
+			if [ "${PARTCMD}" == "restore" ]; then
+				restore_data "${PARTNUM}" "${PARTNAM}" "${PARTARG}" "${PERCENT}"
+
+			fi
+		fi
+	done;
+fi
+
+umount_dev "${USBDEV}${SPL}${USBPART}"
+logd "Process ended at $(date)"
+
+end_menu $ISERROR
+
+exit 0;
