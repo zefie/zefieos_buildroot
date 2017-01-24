@@ -1,15 +1,24 @@
 #!/bin/bash
 
-export DIALOGRC="/etc/zefie/dialogrc"
+## Start Device specific ##
 
+# Enable volume and power keys for menu
+
+if [ -f "/etc/zefie/keymap" ]; then
+	loadkeys -c -s /etc/zefie/keymap
+fi
+
+if [ -f "/etc/zefie/dialogrc" ]; then
+	export DIALOGRC="/etc/zefie/dialogrc"
+fi
+
+## End Device specific ##
 REBOOT_TYPE=""
 DOHALT=0
 
 # Turn off console logging
 dmesg -n 1
 
-# Enable volume and power keys for menu
-loadkeys -c -s /etc/zefie/keymap
 
 # Clear Screen
 clear

@@ -1,0 +1,3 @@
+/lib/modules/${KERND}/kernel/fs/fat/msdos.ko:/lib/modules/${KERND}/kernel/fs/fat/msdos.ko:0644
+/lib/modules/${KERND}/kernel/fs/nls/nls_iso8859-1.ko:/lib/modules/${KERND}/kernel/fs/nls/nls_iso8859-1.ko:0644
+/lib/modules/${KERND}/modules.dep:/lib/modules/${KERND}/modules.dep:0644

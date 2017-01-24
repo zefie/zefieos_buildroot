@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Buildroot 2016.11.1 Configuration
+# Buildroot 2016.11.1-g614eabe-dirty Configuration
 #
 BR2_HAVE_DOT_CONFIG=y
 BR2_HOST_GCC_AT_LEAST_4_5=y
@@ -319,9 +319,9 @@ BR2_ENABLE_LOCALE_WHITELIST="C en_US"
 # BR2_TARGET_TZ_INFO is not set
 BR2_ROOTFS_USERS_TABLES=""
 BR2_ROOTFS_OVERLAY=""
-BR2_ROOTFS_POST_BUILD_SCRIPT="$(TOPDIR)/z_custom_b4_fs_image.sh"
+BR2_ROOTFS_POST_BUILD_SCRIPT=""
 BR2_ROOTFS_POST_FAKEROOT_SCRIPT=""
-BR2_ROOTFS_POST_IMAGE_SCRIPT=""
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(TOPDIR)/z_customfiles/postbuild.sh"
 BR2_ROOTFS_POST_SCRIPT_ARGS=""
 
 #
@@ -531,7 +531,6 @@ BR2_PACKAGE_SED=y
 #
 # Filesystem and flash utilities
 #
-BR2_PACKAGE_ANDROID_IMG_TOOLS=y
 
 #
 # aufs-util needs a linux kernel and a toolchain w/ threads

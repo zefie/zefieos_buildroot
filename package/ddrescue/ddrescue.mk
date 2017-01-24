@@ -5,7 +5,7 @@
 ################################################################################
 
 DDRESCUE_VERSION = 1.21
-DDRESCUE_SITE = file://$(TOPDIR)/z_customfiles
+DDRESCUE_SITE = file://$(TOPDIR)/z_customfiles/packages
 DDRESCUE_DEPENDENCIES = host-bison host-flex
 DDRESCUE_CONF_OPTS = --shared
 DDRESCUE_LICENSE = GPLv2

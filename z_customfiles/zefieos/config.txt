@@ -1,9 +1,7 @@
 zefie.sh:/sbin/zefie:0755
-zefie_wrapper.sh:/sbin/zefie_boot:0755
+zefie_boot.sh:/sbin/zefie_boot:0755
 inittab:/etc/inittab:0644
 ext2simg:/usr/bin/ext2simg:0755
 img2simg:/usr/bin/img2simg:0755
 make_ext4fs:/sbin/make_ext4fs:0755
 simg2img:/usr/bin/simg2img:0755
-keymap:/etc/zefie/keymap:0644
-dialogrc:/etc/zefie/dialogrc:0644

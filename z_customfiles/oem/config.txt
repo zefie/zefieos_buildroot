@@ -1,0 +1,2 @@
+dialogrc:/etc/zefie/dialogrc:0644
+keymap:/etc/zefie/keymap:0644
