@@ -2,6 +2,8 @@ core/zefie:/sbin/zefie:0755
 core/bootstrap:/sbin/zefie_bootstrap:0755
 core/functions:/etc/zefie/core/functions:0644
 core/dialogs:/etc/zefie/core/dialogs:0644
+core/variables:/etc/zefie/core/variables:0644
+tput:/usr/bin/tput:0755
 inittab:/etc/inittab:0644
 ext2simg:/usr/bin/ext2simg:0755
 img2simg:/usr/bin/img2simg:0755

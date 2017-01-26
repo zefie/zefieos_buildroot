@@ -1,44 +1,85 @@
 #!/bin/bash
-source /etc/zefie/core/dialogs
+
+get_kernel_boot_params() {
+	for f in $(cat /proc/cmdline); do
+		if [ ! -z "$(echo "${f}" | /usr/bin/grep zefie)" ]; then
+			ZTY=$(echo "${f}" | cut -d'.' -f2 | cut -d'=' -f1)
+			ZPM=$(echo "${f}" | cut -d'.' -f2 | cut -d'=' -f2)
+			if [ "$ZTY" == "usb" ]; then
+				set_usb_dev "$ZPM"
+			fi
+			if [ "$ZTY" == "dest" ]; then
+				set_dest_dev "$ZPM"
+			fi
+		fi
+	done;
+}
 
 format_disk() {
-	/sbin/make_ext4fs -L "${2}" -a "/${2}" "${3}" 2>>${LOGFILE} 1>>${LOGFILE}
+	case "${1}" in
+		"ext4")
+			/sbin/make_ext4fs -L "${2}" -a "/${2}" "${3}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+			return $?
+			;;
+		*)
+			mk32fs -t "${1}" -L "${2}" "${3}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+			;;
+	esac
 }
 
 
-logd() {
+log() {
     printf '[%s] %s\n' "$(date "+%Y-%m-%d_%H:%M:%S.%N")" "$@" >> "${LOGFILE}"
 }
 
-logn() {
-    printf '%s' "$@" > /dev/console
-    logd "$@"
-}
-
-log() {
-    printf '%s\n' "$@" > /dev/console
-    logd "$@"
+get_blkid() {
+	unset USBBLKTYPE;
+	unset USBBLKLABEL;
+	for u in $(blkid ${1} | tee -a "${LOGFILE}"); do
+		if [ "${u:0:4}" == "TYPE" ]; then
+			USBBLKTYPE=$(echo "${u}" | cut -d'=' -f2 | sed 's/"//g')
+		fi
+		if [ "${u:0:4}" == "LABEL" ]; then
+			USBBLKLABEL=$(echo "${u}" | cut -d'=' -f2 | sed 's/"//g')
+		fi
+	done
 }
 
 mount_usb() {
-	logd "Searching for USB device at ${1}..."
-	while [ ! -b "${1}" ]; do
-	  sleep 1
+	log "Searching for USB device at ${1}..."
+	for (( c=0; c<DISK_TIMEOUT; c++ )); do
+		if [ -b "${1}" ]; then
+			break;
+		fi
+		sleep 1
 	done;
 
-
-	logd "Mounting USB Device ${1} to ${2}"
-	mkdir -p "${2}" 2>>${LOGFILE} 1>>${LOGFILE}
-	MOUNTOPTS=${3}
-	if [ -z "${MOUNTOPTS}" ]; then
-		MOUNTOPTS="ro"
+	if [ ! -b "${1}" ]; then
+		log "Could not find USB device within timeout period (${DISK_TIMEOUT} seconds)"
+		return 1
 	fi
-	mount -o ${MOUNTOPTS} -t vfat "${1}" "${2}"
+
+	log "Checking USB Device details"
+	get_blkid "${1}"
+
+	if [ ! -z "${USBBLKTYPE}" ]; then
+		log "Mounting USB Device ${1} to ${2}"
+		mkdir -p "${2}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+		MOUNTOPTS=${3}
+		if [ -z "${MOUNTOPTS}" ]; then
+			MOUNTOPTS="ro"
+		fi
+		mount -o ${MOUNTOPTS} -t "${USBBLKTYPE}" "${1}" "${2}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+		return $?
+	else
+		return 1
+	fi
 }
 
 umount_dev() {
-	logd "Unmounting device ${1}"
-	umount "${1}" 2>>${LOGFILE} 1>>${LOGFILE}
+	log "Unmounting device ${1}"
+	umount "${1}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+	return $?
 }
 
 verify_md5() {
@@ -47,82 +88,82 @@ verify_md5() {
 	if [ -f "${1}.md5" ]; then
 		SRCMD5=$(cut -d' ' -f1 < "${1}.md5")
 		DATMD5=$(md5sum "${1}" | cut -d' ' -f1)
-		logd "Source MD5: ${SRCMD5}"
-		logd "  Data MD5: ${DATMD5}"
+		log "Source MD5: ${SRCMD5}"
+		log "  Data MD5: ${DATMD5}"
 		if [ "$SRCMD5" != "$DATMD5" ]; then
 			if [ -z "${2}" ]; then
-				logd "[BAD MD5] ${1}"
+				log "[BAD MD5] ${1}"
 			fi
 			echo 0;
 			return 0;
 		fi
 		if [ -z "${2}" ]; then
-			logd "[Good MD5] ${1}"
+			log "[Good MD5] ${1}"
 		fi
 		echo 1;
 		return 1;
 	fi
 	if [ -z "${2}" ]; then
-		logd "[No MD5] ${1}"
+		log "[No MD5] ${1}"
 	fi
 	echo 2;
 	return 2;
 }
 
 secure_erase_dev() {
-	blkdiscard -v -o ${2} -l "${3}" -s "${1}" 2>>${LOGFILE} 1>>${LOGFILE}
+	blkdiscard -v -o ${2} -l "${3}" -s "${1}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+	return $?
 }
 
 restore_tar() {
 	case "${1}" in
 		"gz")
-			cat ${2} | gzip -dc | tar ${TWRP_TAR_FLAGS} -C ${DESTMNT} 2>>${LOGFILE} 1>>${LOGFILE}
+			{ pv -zfF "${PVF}" "${2}" 2>&4 | gzip -dc 2>>"${LOGFILE}" | tar ${TWRP_TAR_FLAGS} -C "${DESTMNT}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"; } 4>&1 | file_progress_dialog "${2}"
 			;;
 		"tar")
-			cat ${2} | tar ${TWRP_TAR_FLAGS} -C ${DESTMNT} 2>>${LOGFILE} 1>>${LOGFILE}
+			{ pv -zfF "${PVF}" "${2}" 2>&4 | tar ${TWRP_TAR_FLAGS} -C "${DESTMNT}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"; } 4>&1 | file_progress_dialog "${2}"
 			;;
 	esac
+	return $?
 }
 
 
 write_image() {
 	case "${1}" in
 		"gz")
-			gzip -dc "${2}" | dd of="${3}" bs=${BLOCKSIZE} 2>>${LOGFILE} 1>>${LOGFILE}
+			{ pv -zfF "${PVF}" "${2}" 2>&4 | gzip -dc 2>>"${LOGFILE}" | dd of="${3}" bs=${BLOCKSIZE} 2>>"${LOGFILE}" 1>>"${LOGFILE}"; } 4>&1 | file_progress_dialog "${2}"
 			;;
 		"xz")
-			xz -dc "${2}" | dd of="${3}" bs=${BLOCKSIZE} 2>>${LOGFILE} 1>>${LOGFILE}
+			{ pv -zfF "${PVF}" "${2}" 2>&4 | xz -dc 2>>"${LOGFILE}" | dd of="${3}" bs=${BLOCKSIZE} 2>>"${LOGFILE}" 1>>"${LOGFILE}"; } 4>&1 | file_progress_dialog "${2}"
 			;;
 		"bz2")
-			bz2 -dc "${2}" | dd of="${3}" bs=${BLOCKSIZE} 2>>${LOGFILE} 1>>${LOGFILE}
+			{ pv -zfF "${PVF}" "${2}" 2>&4 | bzip2 -dc 2>>"${LOGFILE}" | dd of="${3}" bs=${BLOCKSIZE} 2>>"${LOGFILE}" 1>>"${LOGFILE}"; } 4>&1 | file_progress_dialog "${2}"
 			;;
 		"raw")
-			cat "${2}" | dd of="${3}" bs=${BLOCKSIZE} 2>>${LOGFILE} 1>>${LOGFILE}
+			{ pv -zfF "${PVF}" "${2}" 2>&4 | dd of="${3}" bs=${BLOCKSIZE} 2>>"${LOGFILE}" 1>>"${LOGFILE}"; } 4>&1 | file_progress_dialog "${2}"
 			;;
 	esac
+	return $?
 }
 
 initial_scan_image_folder() {
-	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}" 2>>${LOGFILE} 1>>${LOGFILE}
-	for f in $(ls --sort=time -1 "${IMGROOTDIR}/"); do
-		if [ -d "${IMGROOTDIR}/${f}" ] && [ -f "${IMGROOTDIR}/${f}/restore.txt" ]; then
-			IMGNAME="${f}"
-			IMGDIR="${IMGROOTDIR}/${IMGNAME}/images"
-			SGDPART="${IMGROOTDIR}/${IMGNAME}/table/sgdisk.bin"
-			TXTPART="${IMGROOTDIR}/${IMGNAME}/restore.txt"
-			break;
-		fi
-	done;
-	umount_dev "${USBDEV}${SPL}${USBPART}"
+	mount_usb "${USBDEV}" "${USBMNT}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
+	if [ -d "${IMGROOTDIR}" ]; then
+		for f in $(ls --sort=time -1 "${IMGROOTDIR}/"); do
+			if [ -d "${IMGROOTDIR}/${f}" ] && [ -f "${IMGROOTDIR}/${f}/restore.txt" ]; then
+				IMGNAME="${f}"
+				IMGDIR="${IMGROOTDIR}/${IMGNAME}/images"
+				SGDPART="${IMGROOTDIR}/${IMGNAME}/table/sgdisk.bin"
+				TXTPART="${IMGROOTDIR}/${IMGNAME}/restore.txt"
+				break;
+			fi
+		done;
+		umount_dev "${USBDEV}"
+	fi
 }
 
 set_usb_dev() {
 	USBDEV="${1}"
-	if [ "$(echo "${USBDEV}" | /usr/bin/grep -c mmc)" == "1" ]; then
-		SPL="p";
-	else
-		SPL="";
-	fi
 }
 
 set_dest_dev() {
@@ -138,7 +179,7 @@ set_dest_dev() {
 check_result() {
 	if [ "${1}" -ne 0 ]; then
 		ISERROR=1
-		logd "Previous operation exited with error code ${1}"
+		log "Previous operation exited with error code ${1}"
 	fi
 }
 
@@ -147,8 +188,7 @@ restore_data() {
 	if [ "${IMGEXT}" == "win" ]; then
 		WINTYPE=$(echo "${3}" | rev | cut -d'.' -f2 | rev)
 		if [ "${WINTYPE}" == "emmc" ]; then
-			logd "Restoring TWRP eMMC image to ${2}"
-			progress_dialog "Restoring data" "Restoring TWRP eMMC image to ${2}" "${4}"
+			log "Restoring TWRP eMMC image to ${2}"
 			MD5RES=$(verify_md5 "${IMGDIR}/${3}")
 			if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
 				write_image raw "${IMGDIR}/${3}" "${DESTDEV}${PL}${1}"
@@ -158,18 +198,16 @@ restore_data() {
 			fi
 		fi
 		if [ "$WINTYPE" == "ext2" ] || [ "$WINTYPE" == "ext3" ] || [ "$WINTYPE" == "ext4" ]; then
-			format_disk "${WINTYPE}" "${2}" "${DESTDEV}${PL}${1}"
-			mkdir -p "${DESTMNT}" 2>>${LOGFILE} 1>>${LOGFILE}
+			format_disk_with_progress_dialog "${WINTYPE}" "${DESTDEV}${PL}${1}"
+			mkdir -p "${DESTMNT}" 2>>"${LOGFILE}" 1>>"${LOGFILE}"
 			mount -t "${WINTYPE}" "${DESTDEV}${PL}${1}" ${DESTMNT}
 			if [ -f "${IMGDIR}/${3}" ]; then
 				ISGZ=$(file "${IMGDIR}/${3}" | /usr/bin/grep gzip -c)
 				if [ "$ISGZ" == "1" ]; then
-					logd "Restoring TWRP compressed ${WINTYPE} image to ${2}"
-					progress_dialog "Restoring data" "Restoring TWRP compressed ${WINTYPE} image to ${2}" "${4}"
+					log "Restoring TWRP compressed ${WINTYPE} image to ${2}"
 					RESTYPE=gz
 				else
-					logd "Restoring TWRP ${WINTYPE} image to ${2}"
-					progress_dialog "Restoring data" "Restoring TWRP ${WINTYPE} image to ${2}" "${4}"
+					log "Restoring TWRP ${WINTYPE} image to ${2}"
 					RESTYPE=tar
 				fi
 				MD5RES=$(verify_md5 "${IMGDIR}/${3}")
@@ -182,92 +220,73 @@ restore_data() {
 			elif [ -f "${IMGDIR}/${3}000" ]; then
 				ISGZ=$(file "${IMGDIR}/${3}000" | /usr/bin/grep -c gzip)
 				if [ "$ISGZ" == "1" ]; then
-					logd "Restoring TWRP compressed split ${WINTYPE} image to ${2}"
-					progress_dialog "Restoring data" "Restoring TWRP compressed split ${WINTYPE} image to ${2}" "${4}"
+					log "Restoring TWRP compressed split ${WINTYPE} image to ${2}"
 					RESTYPE=gz
 				else
-					logd "Restoring TWRP split ${WINTYPE} image to ${2}"
-					progress_dialog "Restoring data" "Restoring TWRP split ${WINTYPE} image to {2}" "${4}"
+					log "Restoring TWRP split ${WINTYPE} image to ${2}"
 					RESTYPE=tar
 				fi
 				for w in $(ls -1 ${IMGDIR}/${3}*); do
 					if [ -f "${w}" ]; then
 						EXT=$(echo "${w}" | rev | cut -d'.' -f1 | rev)
 						if [ "$EXT" != "md5" ]; then
-							WINFILESU="${WINFILESU} ${w}"
 							MD5RES=$(verify_md5 "${w}" 1)
 							if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
-								WINFILES="${WINFILES} ${w}"
-								if [ "${MD5RES}" == "1" ]; then
-									WINFILESM="${WINFILESM} ${w}"
+								ISGZ=$(file "${IMGDIR}/${3}000" | /usr/bin/grep -c gzip)
+								if [ "$ISGZ" == "1" ]; then
+									RESTYPE=gz
+								else
+									RESTYPE=tar
 								fi
+								restore_tar $RESTYPE "${w}"
+								check_result $?
+								log "Syncronizing data to disk..."
+								sync
 							fi
 						fi
 					fi
 				done;
-				if [ "$WINFILESM" != "$WINFILES" ]; then
-					logd "[Good MD5] ${WINFILES}"
-				elif [ "$WINFILESU" != "$WINFILES" ]; then
-					ISERROR=1
-					SKIPPART=1
-					logd "[BAD MD5] ${WINFILES}"
-				else
-					logd "[No MD5] ${WINFILES}"
-				fi
-				if [ -z "$SKIPPART" ]; then
-					ISGZ=$(file "${IMGDIR}/${3}000" | /usr/bin/grep -c gzip)
-					restore_tar $RESTYPE "${WINFILES}"
-					check_result $?
-					logd "Syncronizing data to disk..."
-					sync
-				else
-					ISERROR=1
-				fi
-				umount_dev "${DESTDEV}${PL}${1}"
 			fi
+			umount_dev "${DESTDEV}${PL}${1}"
 		fi
 	elif [ "$IMGEXT" == "xz" ]; then
-		logd "Restoring xz compressed raw image to ${2}"
-		progress_dialog "Restoring data" "Restoring xz compressed raw image to ${2}" "${4}"
+		log "Restoring xz compressed raw image to ${2}"
 		MD5RES=$(verify_md5 "${IMGDIR}/${3}")
 		if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
 			write_image xz "${IMGDIR}/${3}" "${DESTDEV}${PL}${3}"
 			check_result $?
 		else
 			ISERROR=1
-			logd "Partition ${1} Restore Failed (Backup File MD5 Error)"
+			log "Partition ${1} Restore Failed (Backup File MD5 Error)"
 		fi
 	elif [ "$IMGEXT" == "gz" ]; then
-		logd "Restoring gz compressed raw image to ${2}"
-		progress_dialog "Restoring data" "Restoring gz compressed raw image to ${2}" "${4}"
+		log "Restoring gz compressed raw image to ${2}"
 		MD5RES=$(verify_md5 "${IMGDIR}/${3}")
 		if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
 			write_image gz "${IMGDIR}/${3}" "${DESTDEV}${PL}${1}"
 			check_result $?
 		else
 			ISERROR=1
-			logd "Partition ${1} Restore Failed (Backup File MD5 Error)"
+			log "Partition ${1} Restore Failed (Backup File MD5 Error)"
 		fi
 	elif [ "$IMGEXT" == "bz2" ]; then
-		logd "Restoring bz2 compressed raw image to ${2}"
-		progress_dialog "Restoring data" "Restoring bz2 compressed raw image to ${2}" "${4}"
+		log "Restoring bz2 compressed raw image to ${2}"
 		MD5RES=$(verify_md5 "${IMGDIR}/${3}")
 		if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
 			write_image bz2 "${IMGDIR}/${3}" "${DESTDEV}${PL}${1}"
 			check_result $?
 		else
 			ISERROR=1
-			logd "Partition ${1} Restore Failed (Backup File MD5 Error)"
+			log "Partition ${1} Restore Failed (Backup File MD5 Error)"
 		fi
 	elif [ "$IMGEXT" == "raw" ] || [ "$IMGEXT" == "img" ]; then
-		logd "Restoring raw image to ${2}"
-		progress_dialog "Restoring data" "Restoring raw image to ${2}" "${4}"
+		log "Restoring raw image to ${2}"
 		MD5RES=$(verify_md5 "${IMGDIR}/${3}")
 		if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
 			write_image raw "${IMGDIR}/${3}" "${DESTDEV}${PL}${1}"
 		else
 			ISERROR=1
-			logd "Partition ${1} Restore Failed (Backup File MD5 Error)"
+			log "Partition ${1} Restore Failed (Backup File MD5 Error)"
 		fi
 	else
 		log ""
@@ -275,4 +294,50 @@ restore_data() {
 		log "Please read the README"
 		ISERROR=1
 	fi
+}
+
+restore_all_partitions() {
+	log "Begin restore routine"
+	NUMPARTS=$(wc -l < "${TXTPART}")
+	CURPART=0
+	progress_dialog "${OSNAME}: Restoring Data" "Processing restore configuration ($TXTPART)..." 0
+	for l in $(cat $TXTPART); do
+		CURPART=$((CURPART + 1))
+		PERCENT=$(($(awk "BEGIN { pc=100*${CURPART}/${NUMPARTS}; i=int(pc); print (pc-i<0.5)?i:i+1 }") - 1))
+		PARTNUM=$(echo "${l}" | cut -d':' -f1 2>>${LOGFILE})
+		PARTNAM=$(echo "${l}" | cut -d':' -f2 2>>${LOGFILE})
+		PARTCMD=$(echo "${l}" | cut -d':' -f3 2>>${LOGFILE})
+		PARTARG=$(echo "${l}" | cut -d':' -f4 2>>${LOGFILE})
+		CURRENT_PARTITION="${PARTNAM}"
+
+		unset MD5RES;
+		unset SKIPPART;
+		unset WINFILESM;
+		unset WINFILESU;
+		unset WINFILES;
+		unset RESTYPE;
+
+		## Workaround for issue with partitions not appearing...
+		if [ ! -b "${DESTDEV}${PL}${PARTNUM}" ]; then
+			while [ ! -b "${DESTDEV}${PL}${PARTNUM}" ]; do
+				blockdev --flushbufs --rereadpt "${DESTDEV}"
+				sleep 1
+			done;
+		fi
+		## End workaround
+
+		if [ ! -z "${PARTCMD}" ]; then
+			if [ "${PARTCMD}" == "format" ]; then
+				if [ "${PARTARG}" == "ext2" ] || [ "${PARTARG}" == "ext3" ] || [ "${PARTARG}" == "ext4" ]; then
+					log "Formatting ${PARTNAM} as ${PARTARG}..."
+					format_disk_with_progress_dialog "${PARTARG}" "${DESTDEV}${PL}${PARTNUM}"
+					check_result $?
+				fi
+			fi
+			if [ "${PARTCMD}" == "restore" ]; then
+				restore_data "${PARTNUM}" "${PARTNAM}" "${PARTARG}" "${PERCENT}"
+			fi
+		fi
+		unset CURRENT_PARTITION;
+	done;
 }

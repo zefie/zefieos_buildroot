@@ -1,5 +1,43 @@
 #!/bin/bash
 
+file_progress_dialog() {
+	while read -r progress
+        do
+                if [ "${progress:0:8}" == "zos_xfer" ]; then
+			VERT_CENTER=$(($(tput cols) / 2 - $((DIAGWIDTH / 2))))
+			HORIZ_CENTER=$(($(tput lines) / 2 - 5 ))
+			BYTES_WRITTEN=$(echo "${progress}" | cut -d' ' -f2)
+			BYTES_TOTAL=$(echo "${progress}" | cut -d' ' -f3)
+			XFER_RATE=$(echo "${progress}" | cut -d'[' -f2 | cut -d ']' -f1 | sed 's/ //g')
+			XFER_RATE_AVG=$(echo "${progress}" | cut -d'[' -f3 | cut -d ']' -f1 | sed 's/ //g')
+			FPERCENT=$(($(awk "BEGIN { pc=100*${BYTES_WRITTEN}/${BYTES_TOTAL}; i=int(pc); print (pc-i<0.5)?i:i+1 }") - 1))
+			FPD_FILENAME=$(echo "${1}" | rev | cut -d'/' -f1 | rev)
+			FPD_BCKPNAME=$(echo "${1}" | rev | cut -d'/' -f3 | rev)
+			if [ ! -z "${PERCENT}" ]; then
+				 dialog --keep-window --backtitle "${OSNAME}: Restoring data from ${FPD_BCKPNAME}" \
+				--begin $((HORIZ_CENTER - 7)) "${VERT_CENTER}" --mixedgauge "Current Transfer Rate: ${XFER_RATE}\nAverage Transfer Rate: ${XFER_RATE_AVG}" 12 "${DIAGWIDTH}" "${FPERCENT}" "${FPD_FILENAME}" 7 \
+				--and-widget --keep-window \
+				--begin $((HORIZ_CENTER + 7)) "${VERT_CENTER}" --mixedgauge "Restoring ${CURRENT_PARTITION}..." 10 "${DIAGWIDTH}" "${PERCENT}"
+			else
+				echo "${FPERCENT}" | dialog --keep-window --backtitle "${OSNAME}: Restoring data from ${FPD_BCKPNAME}" --gauge "Restoring ${CURRENT_PARTITION}... (Rate: ${XFER_RATE} / Avg Rate: ${XFER_RATE_AVG})" 10 "${DIAGWIDTH}" 0
+			fi
+		else
+			# If it doesn't have our pv format header, its probably something we should log (stderr)
+			echo "${progress}" >> ${LOGFILE}
+		fi
+	done
+}
+
+format_disk_with_progress_dialog() {
+	VERT_CENTER=$(($(tput cols) / 2 - $((DIAGWIDTH / 2))))
+	HORIZ_CENTER=$(($(tput lines) / 2 - 5 ))
+	dialog --keep-window --backtitle "${OSNAME}: Restoring Data" \
+		--begin $((HORIZ_CENTER - 7)) "${VERT_CENTER}" --mixedgauge "" 12 "${DIAGWIDTH}" 0 "Formatting ${CURRENT_PARTITION}..." 7 \
+		--and-widget --keep-window \
+		--begin $((HORIZ_CENTER + 7)) "${VERT_CENTER}" --mixedgauge "" 10 "${DIAGWIDTH}" "${PERCENT}"
+	format_disk "${1}" "${CURRENT_PARTITION}" "${2}"
+}
+
 progress_dialog() {
 	echo "${3}" | dialog --keep-window --backtitle "${1}" --gauge "${2}" 10 "${DIAGWIDTH}" 0
 }
@@ -7,7 +45,7 @@ progress_dialog() {
 select_image_folder() {
 	unset DIAGOPTS_BROWSE;
 
-	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}"
+	mount_usb "${USBDEV}" "${USBMNT}"
 	for f in $(ls -1 "${IMGROOTDIR}/"); do
 		if [ -d "${IMGROOTDIR}/${f}" ] && [ -f "${IMGROOTDIR}/${f}/restore.txt" ]; then
 			if [ -f "${IMGROOTDIR}/${f}/info.txt" ]; then
@@ -18,19 +56,18 @@ select_image_folder() {
 		fi
 	done;
 	if [ -z "${DIAGOPTS_BROWSE}" ]; then
-		dialog --backtitle "Zefie's Ares8 eMMC Recovery System" --msgbox "No backup folders available\n\nPlease see README.txt" 10 45
+		dialog --backtitle "${OSNAME}" --msgbox "No backup folders available\n\nPlease see README.txt" 10 45
 	else
-		DIAGTITLE="Select Backup Image"
-		DIAGMENU="Please select the image you wish to restore"
 		exec 3>&1
-		RESULT=$(dialog --nocancel --backtitle "${DIAGTITLE}" --menu "${DIAGMENU}" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" "${DIAGOPTS_BROWSE[@]}" 2>&1 1>&3)
+		RESULT=$(dialog --nocancel --backtitle "${OSNAME}: Select Backup" --menu "Please select the backup you wish to restore" \
+			"${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" "${DIAGOPTS_BROWSE[@]}" 2>&1 1>&3)
 		exec 3>&-;
 		IMGNAME="${RESULT}"
 		IMGDIR="${IMGROOTDIR}/${IMGNAME}/images"
 		SGDPART="${IMGROOTDIR}/${IMGNAME}/table/sgdisk.bin"
 		TXTPART="${IMGROOTDIR}/${IMGNAME}/restore.txt"
 	fi
-	umount_dev "${USBDEV}${SPL}${USBPART}"
+	umount_dev "${USBDEV}"
 }
 
 browse_devices() {
@@ -38,15 +75,26 @@ browse_devices() {
 
 	for f in $(find /dev | /usr/bin/grep -Eo '\/dev\/[shm][dm][a-z](blk[0-9])?(?!0-9)*' | sort -u); do
 		if [ -b "${f}" ]; then
-			DIAGOPTS_BROWSE+=("${f}" "${f}");
+			if [ "${1}" == "usb" ]; then
+				get_blkid "${f}"
+				if [ ! -z "${USBBLKTYPE}" ]; then
+					if [ ! -z "${USBBLKLABEL}" ]; then
+						DIAGOPTS_BROWSE+=("${f}" "FS: ${USBBLKTYPE} Label: ${USBBLKLABEL}");
+					else
+						DIAGOPTS_BROWSE+=("${f}" "FS: ${USBBLKTYPE}");
+					fi
+				fi
+			else
+				DIAGOPTS_BROWSE+=("${f}" "${f}");
+			fi
 		fi
 	done;
 	if [ "${1}" == "usb" ]; then
-		DIAGTITLE="Select USB Root Device"
+		DIAGTITLE="${OSNAME}: Select USB Root Device"
 		DIAGMENU="Please select the root device of your USB"
 	fi
 	if [ "${1}" == "dest" ]; then
-		DIAGTITLE="Select Destination Root Device"
+		DIAGTITLE="${OSNAME}: Select Destination Root Device"
 		DIAGMENU="Please select the root device of your destination drive"
 	fi
 	exec 3>&1
@@ -54,6 +102,9 @@ browse_devices() {
 	exec 3>&-;
 	if [ "${1}" == "usb" ]; then
 		set_usb_dev "${RESULT}"
+		if [ -z "${IMGNAME}" ]; then
+			initial_scan_image_folder
+		fi
 	fi
 	if [ "${1}" == "dest" ]; then
 		set_dest_dev "${RESULT}"
@@ -61,6 +112,12 @@ browse_devices() {
 	if [ -b "$DESTDEV" ] && [ -b "$USBDEV" ] && [ "$NODEVS" == "1" ]; then
 		NODEVS=0;
 	fi
+}
+
+show_error() {
+	log "${0} $*"
+	dialog --backtitle "${OSNAME}: Error" --msgbox "$@" 10 50
+	end_menu 1
 }
 
 confirm_menu() {
@@ -75,22 +132,25 @@ confirm_menu() {
 }
 
 log_copy() {
-	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}" "rw"
-	rm -f /usb/zefie.log
-	cp "${LOGFILE}" /usb/zefie.log
-	if [ -f "/usb/zefie.log" ]; then
+	mount_usb "${USBDEV}" "${USBMNT}" "rw"
+	rm -f "${USBLOG}"
+	cp "${LOGFILE}" "${USBLOG}"
+	if [ -f "${USBLOG}" ]; then
 		USBSUCCESS=1
 	fi
-	umount_dev "${USBDEV}${SPL}${USBPART}"
+	umount_dev "${USBDEV}"
 	if [ "$USBSUCCESS" == "1" ]; then
-		dialog --backtitle "Zefie's Ares8 eMMC Recovery System" --msgbox "Log files copied to USB" 5 30
+		dialog --backtitle "${OSNAME}" --msgbox "Log files copied to USB" 5 30
 	else
-		dialog --backtitle "Zefie's Ares8 eMMC Recovery System" --msgbox "There was an error copying the log files to USB" 5 50
+		dialog --backtitle "${OSNAME}" --msgbox "There was an error copying the log files to USB" 5 50
 	fi
 }
 
 start_menu() {
-	mount_usb "${USBDEV}${SPL}${USBPART}" "${USBMNT}" 2>>${LOGFILE} 1>>${LOGFILE}
+	if [ "$NODEVS" != "1" ]; then
+		mount_usb "${USBDEV}" "${USBMNT}" 2>>${LOGFILE} 1>>${LOGFILE}
+	fi
+
 	if [ "$NODEVS" == "1" ]; then
 		DIAGOPTS=("View Log" "View the log from the restore process"
 			  "Copy Log to USB" "Copies the log files to the root of the USB"
@@ -101,7 +161,7 @@ start_menu() {
 			  "" ""
 			  "Reboot" "Cancel and do not touch eMMC"
 			  "Shutdown" "Cancel and do not touch eMMC")
-		DIAGTITLE="Zefie's Ares8 eMMC Recovery System - No Devices Configured"
+		DIAGTITLE="${OSNAME} - No Devices Configured"
 	elif [ ! -d "${IMGDIR}" ] || [ ! -f "${TXTPART}" ]; then
 		DIAGOPTS=("Change Backup" "Select backup folder. Current: none"
 			  "Wipe Only" "Wipe, but do not restore data"
@@ -115,7 +175,7 @@ start_menu() {
 			  "" ""
 			  "Reboot" "Cancel and do not touch eMMC"
 			  "Shutdown" "Cancel and do not touch eMMC")
-		DIAGTITLE="Zefie's Ares8 eMMC Recovery System"
+		DIAGTITLE="${OSNAME}"
 
 	else
 		DIAGOPTS=("Change Backup" "Select backup folder. Current: ${IMGNAME}"
@@ -135,9 +195,11 @@ start_menu() {
 			  "" ""
 			  "Reboot" "Cancel and do not touch eMMC"
 			  "Shutdown" "Cancel and do not touch eMMC")
-		DIAGTITLE="Zefie's Ares8 eMMC Recovery System"
+		DIAGTITLE="${OSNAME}"
 	fi
-	umount_dev "${USBDEV}${SPL}${USBPART}"
+	if [ "$NODEVS" != "1" ]; then
+		umount_dev "${USBDEV}"
+	fi
 	exec 3>&1
 	RESULT=$(dialog --nocancel --backtitle "${DIAGTITLE}" --menu "Please select an action" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" "${DIAGOPTS[@]}" 2>&1 1>&3)
 	exec 3>&-;
@@ -186,7 +248,7 @@ start_menu() {
 			exit 71;
 			;;
 		"View Log")
-			dialog --exit-label "Back" --backtitle "Zefie's Ares8 eMMC Recovery System" --textbox "${LOGFILE}" "${DIAGHEIGHT}" "${DIAGWIDTH}"
+			dialog --exit-label "Back" --backtitle "${OSNAME}" --textbox "${LOGFILE}" "${DIAGHEIGHT}" "${DIAGWIDTH}"
 			start_menu
 			;;
 		"Copy Log to USB")
@@ -194,7 +256,7 @@ start_menu() {
 			start_menu
 			;;
 		"Enter Shell")
-			umount_dev "${USBDEV}${SPL}${USBPART}"
+			umount_dev "${USBDEV}"
 			/bin/bash
 			exit 69;
 			;;
@@ -245,7 +307,7 @@ end_menu() {
 	DIAGOPTS+=("" "" \
 		   "Enter Shell" "Keyboard required");
 	exec 3>&1
-	RESULT=$(dialog --no-cancel --backtitle "Zefie's Ares8 eMMC Recovery System" \
+	RESULT=$(dialog --no-cancel --backtitle "${OSNAME}" \
 		--menu "${STRTITLE}" "${DIAGHEIGHT}" "${DIAGWIDTH}" "${DIAGHEIGHT}" \
 		"${DIAGOPTS[@]}" 2>&1 1>&3)
 	exec 3>&-;
@@ -256,7 +318,7 @@ end_menu() {
 			end_menu "${1}"
 			;;
 		"View Log")
-			dialog --exit-label "Back" --backtitle "Zefie's Ares8 eMMC Recovery System" --textbox "${LOGFILE}" "${DIAGHEIGHT}" "${DIAGWIDTH}"
+			dialog --exit-label "Back" --backtitle "${OSNAME}" --textbox "${LOGFILE}" "${DIAGHEIGHT}" "${DIAGWIDTH}"
 			end_menu "${1}"
 			;;
 		"Copy Log to USB")
@@ -276,7 +338,7 @@ end_menu() {
 			exit 72;
 			;;
 		"Enter Shell")
-			umount_dev "${USBDEV}${SPL}${USBPART}"
+			umount_dev "${USBDEV}"
 			/bin/bash
 			end_menu "${1}"
 			;;

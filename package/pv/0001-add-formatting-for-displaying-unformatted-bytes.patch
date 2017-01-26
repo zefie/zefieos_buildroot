@@ -1,0 +1,375 @@
+diff -Naur pv-1.6.0_orig/autoconf/make/unreal.mk pv-1.6.0/autoconf/make/unreal.mk
+--- pv-1.6.0_orig/autoconf/make/unreal.mk	2014-08-26 15:51:42.000000000 -0700
++++ pv-1.6.0/autoconf/make/unreal.mk	2017-01-24 16:19:44.843558582 -0800
+@@ -85,6 +85,8 @@
+ 	rm -f $(alltarg) src/include/config.h
+ 	rm -rf $(package)-$(version).tar* $(package)-$(version) $(package)-$(version)-*.rpm
+ 	rm -f *.html config.*
++	rm -f doc/quickref.1
++	rm -f src/nls/table.*
+ 	rm Makefile
+ 
+ cvsclean svnclean: distclean
+diff -Naur pv-1.6.0_orig/doc/quickref.1.in pv-1.6.0/doc/quickref.1.in
+--- pv-1.6.0_orig/doc/quickref.1.in	2015-03-14 17:19:18.000000000 -0700
++++ pv-1.6.0/doc/quickref.1.in	2017-01-24 20:52:28.573066643 -0800
+@@ -422,6 +422,9 @@
+ .B \-h, \-\-help
+ Print a usage message on standard output and exit successfully.
+ .TP
++.B \-z, \-z
++Print progress on a new line when updated, instead of using a carriage return.
++.TP
+ .B \-V, \-\-version         
+ Print version information on standard output and exit successfully.
+ 
+@@ -453,16 +456,22 @@
+ .B %r
+ Current data transfer rate.  Equivalent to
+ .BR \-r .
++.B %R
++Current data transfer rate in raw bytes.
+ .TP
+ .B %a
+ Average data transfer rate.  Equivalent to
+ .BR \-a .
++.B %V
++Average data transfer rate in raw bytes.
++.TP
++.B %S
++Display the file size, in bytes, if known.
+ .TP
+-.B %b
+-Bytes transferred so far (or lines if
++.B %B
++Bytes transferred so far in raw bytes (or lines if
+ .B \-l
+-was specified).  Equivalent to
+-.BR \-b .
++was specified).
+ .TP
+ .B %T
+ Percentage of the transfer buffer in use.  Equivalent to
+diff -Naur pv-1.6.0_orig/src/include/options.h pv-1.6.0/src/include/options.h
+--- pv-1.6.0_orig/src/include/options.h	2015-03-14 17:12:44.000000000 -0700
++++ pv-1.6.0/src/include/options.h	2017-01-24 19:47:04.907042818 -0800
+@@ -5,6 +5,8 @@
+ #ifndef _OPTIONS_H
+ #define _OPTIONS_H 1
+ 
++#include <stdbool.h>
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -13,6 +15,7 @@
+ typedef struct opts_s *opts_t;
+ 
+ struct opts_s {           /* structure describing run-time options */
++	bool newline;                  /* Prints a new line instead of carriage return */
+ 	char *program_name;            /* name the program is running as */
+ 	unsigned char do_nothing;      /* exit-without-doing-anything flag */
+ 	unsigned char progress;        /* progress bar flag */
+diff -Naur pv-1.6.0_orig/src/include/pv.h pv-1.6.0/src/include/pv.h
+--- pv-1.6.0_orig/src/include/pv.h	2015-03-14 17:17:33.000000000 -0700
++++ pv-1.6.0/src/include/pv.h	2017-01-24 19:46:43.995011385 -0800
+@@ -5,6 +5,8 @@
+ #ifndef _PV_H
+ #define _PV_H 1
+ 
++#include <stdbool.h>
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -72,6 +74,7 @@
+ /*
+  * Set the various options.
+  */
++extern void pv_state_newline(pvstate_t, bool);
+ extern void pv_state_force_set(pvstate_t, unsigned char);
+ extern void pv_state_cursor_set(pvstate_t, unsigned char);
+ extern void pv_state_numeric_set(pvstate_t, unsigned char);
+diff -Naur pv-1.6.0_orig/src/include/pv-internal.h pv-1.6.0/src/include/pv-internal.h
+--- pv-1.6.0_orig/src/include/pv-internal.h	2015-03-14 17:18:03.000000000 -0700
++++ pv-1.6.0/src/include/pv-internal.h	2017-01-24 19:48:31.051171966 -0800
+@@ -17,21 +17,26 @@
+ #include <sys/types.h>
+ #include <sys/time.h>
+ #include <sys/stat.h>
++#include <stdbool.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
+-#define PV_DISPLAY_PROGRESS	1
+-#define PV_DISPLAY_TIMER	2
+-#define PV_DISPLAY_ETA		4
+-#define PV_DISPLAY_RATE		8
+-#define PV_DISPLAY_AVERAGERATE	16
+-#define PV_DISPLAY_BYTES	32
+-#define PV_DISPLAY_NAME		64
+-#define PV_DISPLAY_BUFPERCENT	128
+-#define PV_DISPLAY_OUTPUTBUF	256
+-#define PV_DISPLAY_FINETA	512
++#define PV_DISPLAY_PROGRESS			1
++#define PV_DISPLAY_TIMER			2
++#define PV_DISPLAY_ETA				4
++#define PV_DISPLAY_RATE				8
++#define PV_DISPLAY_RATE_UNFORMATTED		16
++#define PV_DISPLAY_AVERAGERATE			32
++#define PV_DISPLAY_AVERAGERATE_UNFORMATTED	32
++#define PV_DISPLAY_BYTES			64
++#define PV_DISPLAY_BYTES_UNFORMATTED		128
++#define PV_DISPLAY_NAME				256
++#define PV_DISPLAY_BUFPERCENT			512
++#define PV_DISPLAY_OUTPUTBUF			1024
++#define PV_DISPLAY_FINETA			2048
++#define PV_DISPLAY_SIZE				4096
+ 
+ #define RATE_GRANULARITY	100000	 /* usec between -L rate chunks */
+ #define REMOTE_INTERVAL		100000	 /* usec between checks for -R */
+@@ -54,6 +59,7 @@
+ 	/*******************
+ 	 * Program control *
+ 	 *******************/
++	bool newline;                    /* Prints a new line instead of carriage return */
+ 	unsigned char force;             /* display even if not on terminal */
+ 	unsigned char cursor;            /* use cursor positioning */
+ 	unsigned char numeric;           /* numeric output only */
+@@ -118,11 +124,15 @@
+ 	int prev_length;		 /* length of last string we output */
+ 	char str_name[512];
+ 	char str_transferred[128];
++	char str_transferred_unformatted[128];
+ 	char str_bufpercent[128];
+ 	char str_timer[128];
+ 	char str_rate[128];
++	char str_rate_unformatted[128];
+ 	char str_average_rate[128];
++	char str_average_rate_unformatted[128];
+ 	char str_progress[1024];
++	char str_size[128];
+ 	char str_lastoutput[512];
+ 	char str_eta[128];
+ 	char str_fineta[128];
+diff -Naur pv-1.6.0_orig/src/main/main.c pv-1.6.0/src/main/main.c
+--- pv-1.6.0_orig/src/main/main.c	2015-03-14 17:37:18.000000000 -0700
++++ pv-1.6.0/src/main/main.c	2017-01-24 19:46:27.426986474 -0800
+@@ -12,6 +12,7 @@
+ /* #undef MAKE_STDOUT_NONBLOCKING */
+ 
+ #include <stdio.h>
++#include <stdbool.h>
+ #include <string.h>
+ #include <errno.h>
+ #include <unistd.h>
+@@ -181,6 +182,7 @@
+ 	/*
+ 	 * Copy parameters from options into main state.
+ 	 */
++	pv_state_newline_set(state, opts->newline);
+ 	pv_state_interval_set(state, opts->interval);
+ 	pv_state_width_set(state, opts->width);
+ 	pv_state_height_set(state, opts->height);
+diff -Naur pv-1.6.0_orig/src/main/options.c pv-1.6.0/src/main/options.c
+--- pv-1.6.0_orig/src/main/options.c	2015-03-14 17:37:18.000000000 -0700
++++ pv-1.6.0/src/main/options.c	2017-01-24 19:41:57.306577344 -0800
+@@ -80,12 +80,13 @@
+ 		{"remote", 1, 0, 'R'},
+ 		{"pidfile", 1, 0, 'P'},
+ 		{"watchfd", 1, 0, 'd'},
++		{"newline", 0, 0, 'z'},
+ 		{0, 0, 0, 0}
+ 	};
+ 	int option_index = 0;
+ #endif
+ 	char *short_options =
+-	    "hVpteIrabTA:fnqcWD:s:l0i:w:H:N:F:L:B:CESR:P:d:";
++	    "hVpteIrabTA:fnqcWD:s:l0i:w:H:N:F:L:B:CESR:P:d:z";
+ 	int c, numopts;
+ 	unsigned int check_pid;
+ 	int check_fd;
+@@ -124,6 +125,7 @@
+ 	opts->delay_start = 0;
+ 	opts->watch_pid = 0;
+ 	opts->watch_fd = -1;
++	opts->newline = 0;
+ 
+ 	do {
+ #ifdef HAVE_GETOPT_LONG
+@@ -311,6 +313,9 @@
+ 			sscanf(optarg, "%u:%d", &(opts->watch_pid),
+ 			       &(opts->watch_fd));
+ 			break;
++		case 'z':
++			opts->newline = 1;
++			break;
+ 		default:
+ #ifdef HAVE_GETOPT_LONG
+ 			fprintf(stderr,
+diff -Naur pv-1.6.0_orig/src/pv/display.c pv-1.6.0/src/pv/display.c
+--- pv-1.6.0_orig/src/pv/display.c	2015-03-14 17:37:18.000000000 -0700
++++ pv-1.6.0/src/pv/display.c	2017-01-24 19:36:29.366029716 -0800
+@@ -231,9 +231,13 @@
+ 
+ 	state->str_name[0] = 0;
+ 	state->str_transferred[0] = 0;
++	state->str_transferred_unformatted[0] = 0;
+ 	state->str_timer[0] = 0;
+ 	state->str_rate[0] = 0;
++	state->str_rate_unformatted[0] = 0;
+ 	state->str_average_rate[0] = 0;
++	state->str_average_rate_unformatted[0] = 0;
++	state->str_size[0] = 0;
+ 	state->str_progress[0] = 0;
+ 	state->str_eta[0] = 0;
+ 	memset(state->format, 0, sizeof(state->format));
+@@ -328,6 +332,12 @@
+ 				state->format[segment].length = 0;
+ 				state->components_used |= PV_DISPLAY_RATE;
+ 				break;
++			case 'R':
++				state->format[segment].string =
++				    state->str_rate_unformatted;
++				state->format[segment].length = 0;
++				state->components_used |= PV_DISPLAY_RATE_UNFORMATTED;
++				break;
+ 			case 'a':
+ 				state->format[segment].string =
+ 				    state->str_average_rate;
+@@ -335,12 +345,25 @@
+ 				state->components_used |=
+ 				    PV_DISPLAY_AVERAGERATE;
+ 				break;
++			case 'V':
++				state->format[segment].string =
++				    state->str_average_rate_unformatted;
++				state->format[segment].length = 0;
++				state->components_used |=
++				    PV_DISPLAY_AVERAGERATE_UNFORMATTED;
++				break;
+ 			case 'b':
+ 				state->format[segment].string =
+ 				    state->str_transferred;
+ 				state->format[segment].length = 0;
+ 				state->components_used |= PV_DISPLAY_BYTES;
+ 				break;
++			case 'B':
++				state->format[segment].string =
++				    state->str_transferred_unformatted;
++				state->format[segment].length = 0;
++				state->components_used |= PV_DISPLAY_BYTES_UNFORMATTED;
++				break;
+ 			case 'T':
+ 				state->format[segment].string =
+ 				    state->str_bufpercent;
+@@ -355,6 +378,14 @@
+ 				    strlen(state->str_name);
+ 				state->components_used |= PV_DISPLAY_NAME;
+ 				break;
++
++			case 'S':
++				state->format[segment].string =
++				    state->str_size;
++				state->format[segment].length =
++				    strlen(state->str_size);
++				state->components_used |= PV_DISPLAY_SIZE;
++				break;
+ 			case '%':
+ 				/* %% => % */
+ 				state->format[segment].string =
+@@ -470,7 +501,8 @@
+ 	 * not worth the extra CPU cycles.
+ 	 */
+ 	if ((bytes_since_last < 0)
+-	    || ((state->components_used & PV_DISPLAY_AVERAGERATE) != 0)) {
++	    || ((state->components_used & PV_DISPLAY_AVERAGERATE) != 0)
++	    || ((state->components_used & PV_DISPLAY_AVERAGERATE_UNFORMATTED) != 0)) {
+ 		/* Sanity check to avoid division by zero */
+ 		if (elapsed_sec < 0.000001)
+ 			elapsed_sec = 0.000001;
+@@ -580,6 +612,7 @@
+ 	state->str_rate[0] = 0;
+ 	state->str_average_rate[0] = 0;
+ 	state->str_progress[0] = 0;
++	state->str_size[0] = 0;
+ 	state->str_lastoutput[0] = 0;
+ 	state->str_eta[0] = 0;
+ 	state->str_fineta[0] = 0;
+@@ -592,6 +625,11 @@
+ 			    state->linemode ? 0 : 1);
+ 	}
+ 
++	/* Unformatted bytes display */
++	if ((state->components_used & PV_DISPLAY_BYTES_UNFORMATTED) != 0) {
++		       snprintf(state->str_transferred_unformatted, sizeof(state->str_transferred_unformatted), "%lld", total_bytes);
++	}
++
+ 	/* Transfer buffer percentage - set up the display string. */
+ 	if ((state->components_used & PV_DISPLAY_BUFPERCENT) != 0) {
+ 		if (state->buffer_size > 0)
+@@ -605,6 +643,11 @@
+ #endif
+ 	}
+ 
++	/* Size - set up the display string with unformatted bytes. */
++	if ((state->components_used & PV_DISPLAY_SIZE) != 0) {
++                       snprintf(state->str_size, sizeof(state->str_size), "%u", state->size);
++	}
++
+ 	/* Timer - set up the display string. */
+ 	if ((state->components_used & PV_DISPLAY_TIMER) != 0) {
+ 		/*
+@@ -628,6 +671,11 @@
+ 			    state->linemode ? 0 : 1);
+ 	}
+ 
++	/* Rate - set up the display string with unformatted bytes. */
++	if ((state->components_used & PV_DISPLAY_RATE_UNFORMATTED) != 0) {
++                       snprintf(state->str_rate_unformatted, sizeof(state->str_rate_unformatted), "%lld", (long long) rate);
++	}
++
+ 	/* Average rate - set up the display string. */
+ 	if ((state->components_used & PV_DISPLAY_AVERAGERATE) != 0) {
+ 		pv__sizestr(state->str_average_rate,
+@@ -636,6 +684,11 @@
+ 			    state->linemode ? 0 : 1);
+ 	}
+ 
++	/* Average rate - set up the display string with unformatted bytes. */
++	if ((state->components_used & PV_DISPLAY_AVERAGERATE_UNFORMATTED) != 0) {
++                       snprintf(state->str_average_rate_unformatted, sizeof(state->str_average_rate_unformatted), "%lld", (long long) average_rate);
++	}
++
+ 	/* Last output bytes - set up the display string. */
+ 	if ((state->components_used & PV_DISPLAY_OUTPUTBUF) != 0) {
+ 		int idx;
+@@ -955,6 +1008,11 @@
+ 	} else if (state->cursor) {
+ 		pv_crs_update(state, display);
+ 		state->display_visible = 1;
++	} else if (state->newline) {
++		write(STDERR_FILENO, display, strlen(display));
++		write(STDERR_FILENO, "\n", 1);
++		state->display_visible = 1;
++
+ 	} else {
+ 		write(STDERR_FILENO, display, strlen(display));
+ 		write(STDERR_FILENO, "\r", 1);
+diff -Naur pv-1.6.0_orig/src/pv/state.c pv-1.6.0/src/pv/state.c
+--- pv-1.6.0_orig/src/pv/state.c	2015-03-14 17:37:18.000000000 -0700
++++ pv-1.6.0/src/pv/state.c	2017-01-24 19:47:39.099094142 -0800
+@@ -175,6 +175,11 @@
+ 	state->interval = val;
+ };
+ 
++void pv_state_newline_set(pvstate_t state, bool val)
++{
++	state->newline = val;
++};
++
+ void pv_state_width_set(pvstate_t state, unsigned int val)
+ {
+ 	state->width = val;

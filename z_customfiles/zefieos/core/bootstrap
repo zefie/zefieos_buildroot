@@ -13,6 +13,8 @@ if [ -f "/etc/zefie/dialogrc" ]; then
 fi
 
 ## End Device specific ##
+
+export TERMINFO=/usr/share/terminfo
 REBOOT_TYPE=""
 DOHALT=0
 

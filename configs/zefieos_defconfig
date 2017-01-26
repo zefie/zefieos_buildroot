@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Buildroot 2016.11.1-gca9d655-dirty Configuration
+# Buildroot 2016.11.1-gee9c313-dirty Configuration
 #
 BR2_HAVE_DOT_CONFIG=y
 BR2_HOST_GCC_AT_LEAST_4_5=y
@@ -479,7 +479,7 @@ BR2_PACKAGE_GOOGLE_BREAKPAD_ARCH_SUPPORTS=y
 BR2_PACKAGE_OPROFILE_ARCH_SUPPORTS=y
 # BR2_PACKAGE_OPROFILE is not set
 # BR2_PACKAGE_PAX_UTILS is not set
-# BR2_PACKAGE_PV is not set
+BR2_PACKAGE_PV=y
 
 #
 # racehound needs an Linux kernel >= 3.14 to be built
