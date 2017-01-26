@@ -253,7 +253,7 @@ restore_data() {
 		log "Restoring xz compressed raw image to ${2}"
 		MD5RES=$(verify_md5 "${IMGDIR}/${3}")
 		if [ "${MD5RES}" == "1" ] || [ "${MD5RES}" == "2" ]; then
-			write_image xz "${IMGDIR}/${3}" "${DESTDEV}${PL}${3}"
+			write_image xz "${IMGDIR}/${3}" "${DESTDEV}${PL}${1}"
 			check_result $?
 		else
 			ISERROR=1
